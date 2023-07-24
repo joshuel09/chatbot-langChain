@@ -30,8 +30,6 @@ user_api_key = st.sidebar.text_input(
 
 uploaded_file = st.sidebar.file_uploader("upload", type=['png', 'jpg'])
 
-
-# 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
 os.environ['OPENAI_API_KEY'] = user_api_key
 
 if uploaded_file :
