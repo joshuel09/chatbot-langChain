@@ -11,7 +11,6 @@ from langchain.vectorstores import FAISS
 import tempfile
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-
 from langchain.tools import BaseTool
 from transformers import BlipProcessor, BlipForConditionalGeneration, DetrImageProcessor, DetrForObjectDetection
 from PIL import Image
@@ -20,7 +19,11 @@ import torch
 from langchain.agents import initialize_agent
 from langchain.chains.conversation.memory import ConversationBufferWindowMemory
 
+from deepface import DeepFace
 
+import cv2 as cv
+import math
+import time
 
 
 user_api_key = st.sidebar.text_input(
@@ -61,7 +64,7 @@ if uploaded_file :
             model = BlipForConditionalGeneration.from_pretrained(model_name).to(device)
 
             inputs = processor(image, return_tensors='pt').to(device)
-            output = model.generate(**inputs, max_new_tokens=20)
+            output = model.generate(**inputs, max_new_tokens=4000)
 
             caption = processor.decode(output[0], skip_special_tokens=True)
 
@@ -102,6 +105,52 @@ if uploaded_file :
         def _arun(self, query: str):
             raise NotImplementedError("This tool does not support async")
         
+    class EmotionDetectionTool(BaseTool):
+        name = "Emotion detector"
+        description = "Use this tool when given the path to an image that you would like to detect emotion. " 
+
+        def _run(self, img_path):
+
+            detections = DeepFace.analyze(img_path)
+
+            return detections
+
+        def _arun(self, query: str):
+            raise NotImplementedError("This tool does not support async")
+        
+    class GenderAgeDetectionTool(BaseTool):
+        
+        name = "Gender and age detector"
+        description = "Use this tool when given the path to an image that you would like to detect Gender and Age. " 
+
+        def _run(self, img_path):
+
+            padding = 20
+
+            t = time.time()
+            frame = cv.imread(img_path)
+            frameFace, bboxes = getFaceBox(faceNet, frame)
+            for bbox in bboxes:
+                # print(bbox)
+                face = frame[max(0,bbox[1]-padding):min(bbox[3]+padding,frame.shape[0]-1),max(0,bbox[0]-padding):min(bbox[2]+padding, frame.shape[1]-1)]
+                blob = cv.dnn.blobFromImage(face, 1.0, (227, 227), MODEL_MEAN_VALUES, swapRB=False)
+                genderNet.setInput(blob)
+                genderPreds = genderNet.forward()
+                gender = genderList[genderPreds[0].argmax()]
+                # print("Gender Output : {}".format(genderPreds))
+                print("Gender : {}, conf = {:.3f}".format(gender, genderPreds[0].max()))
+                ageNet.setInput(blob)
+                agePreds = ageNet.forward()
+                age = ageList[agePreds[0].argmax()]
+                print("Age Output : {}".format(agePreds))
+                print("Age : {}, conf = {:.3f}".format(age, agePreds[0].max()))
+                label = "{},{}".format(gender, age)
+                # cv.putText(frameFace, label, (bbox[0], bbox[1]-10), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv.LINE_AA)
+                return {"Gender":gender, "Age":age}
+
+        def _arun(self, query: str):
+            raise NotImplementedError("This tool does not support async")
+        
     def get_image_caption(image_path):
         """
         Generates a short caption for the provided image.
@@ -121,11 +170,100 @@ if uploaded_file :
         model = BlipForConditionalGeneration.from_pretrained(model_name).to(device)
 
         inputs = processor(image, return_tensors='pt').to(device)
-        output = model.generate(**inputs, max_new_tokens=20)
+        output = model.generate(**inputs, max_new_tokens=4000)
 
         caption = processor.decode(output[0], skip_special_tokens=True)
 
         return caption
+    
+    def getFaceBox(net, frame, conf_threshold=0.7):
+        frameOpencvDnn = frame.copy()
+        frameHeight = frameOpencvDnn.shape[0]
+        frameWidth = frameOpencvDnn.shape[1]
+        blob = cv.dnn.blobFromImage(frameOpencvDnn, 1.0, (300, 300), [104, 117, 123], True, False)    
+        net.setInput(blob)
+        detections = net.forward()
+        bboxes = []
+        for i in range(detections.shape[2]):
+            confidence = detections[0, 0, i, 2]
+            if confidence > conf_threshold:
+                x1 = int(detections[0, 0, i, 3] * frameWidth)
+                y1 = int(detections[0, 0, i, 4] * frameHeight)
+                x2 = int(detections[0, 0, i, 5] * frameWidth)
+                y2 = int(detections[0, 0, i, 6] * frameHeight)
+                bboxes.append([x1, y1, x2, y2])
+                cv.rectangle(frameOpencvDnn, (x1, y1), (x2, y2), (0, 255, 0), int(round(frameHeight/150)), 8)
+        return frameOpencvDnn, bboxes
+    
+    faceProto = "AgeGender/opencv_face_detector.pbtxt"
+    faceModel = "AgeGender/opencv_face_detector_uint8.pb"
+    ageProto = "AgeGender/age_deploy.prototxt"
+    ageModel = "AgeGender/age_net.caffemodel"
+    genderProto = "AgeGender/gender_deploy.prototxt"
+    genderModel = "AgeGender/gender_net.caffemodel"
+
+    # Load network
+    ageNet = cv.dnn.readNet(ageModel, ageProto)
+    genderNet = cv.dnn.readNet(genderModel, genderProto)
+    faceNet = cv.dnn.readNet(faceModel, faceProto)
+
+    MODEL_MEAN_VALUES = (78.4263377603, 87.7689143744, 114.895847746)
+
+    ageList = ['(0-2)', '(4-6)', '(8-12)', '(15-20)', '(25-32)', '(34-39)', '(48-53)', '(60-100)']
+    genderList = ['Male', 'Female'] 
+        
+
+    def age_gender_detector(img_path):
+
+        """
+        Detects gender and age in the provided image.
+
+        Args:
+            image_path (str): The path to the image file.
+
+        Returns:
+            str: A string with all the detected objects. Each object as '[x1, x2, y1, y2, class_name, confindence_score]'.
+        """
+
+        # Read frame
+
+        frame = cv.imread(img_path)
+
+        padding = 20
+
+        t = time.time()
+        frameFace, bboxes = getFaceBox(faceNet, frame)
+        for bbox in bboxes:
+            # print(bbox)
+            face = frame[max(0,bbox[1]-padding):min(bbox[3]+padding,frame.shape[0]-1),max(0,bbox[0]-padding):min(bbox[2]+padding, frame.shape[1]-1)]
+            blob = cv.dnn.blobFromImage(face, 1.0, (227, 227), MODEL_MEAN_VALUES, swapRB=False)
+            genderNet.setInput(blob)
+            genderPreds = genderNet.forward()
+            gender = genderList[genderPreds[0].argmax()]
+            # print("Gender Output : {}".format(genderPreds))
+            print("Gender : {}, conf = {:.3f}".format(gender, genderPreds[0].max()))
+            ageNet.setInput(blob)
+            agePreds = ageNet.forward()
+            age = ageList[agePreds[0].argmax()]
+            print("Age Output : {}".format(agePreds))
+            print("Age : {}, conf = {:.3f}".format(age, agePreds[0].max()))
+            label = "{},{}".format(gender, age)
+            cv.putText(frameFace, label, (bbox[0], bbox[1]-10), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv.LINE_AA)
+            return frameFace
+    
+    def get_image_emotion(image_path):
+      
+        """
+        Detects emotions in the provided image.
+
+        Args:
+            image_path (str): The path to the image file.
+
+        Returns:
+            str: A string with all the detected objects. Each object as '[x1, x2, y1, y2, class_name, confindence_score]'.
+        """
+
+        return DeepFace.analyze(img_path = image_path)
 
 
     def detect_objects(image_path):
@@ -161,7 +299,7 @@ if uploaded_file :
 
 
     #initialize the agent
-    tools = [ImageCaptionTool(), ObjectDetectionTool()]
+    tools = [ImageCaptionTool(), ObjectDetectionTool(), EmotionDetectionTool(), GenderAgeDetectionTool()]
 
     llm = ChatOpenAI(temperature=0.0,model_name='gpt-3.5-turbo')
 
@@ -181,10 +319,8 @@ if uploaded_file :
         early_stopping_method='generate'
     )
 
-
     # chain = ConversationalRetrievalChain.from_llm(llm = ChatOpenAI(temperature=0.0,model_name='gpt-3.5-turbo-16k'),
     #                                                                   retriever=vectors.as_retriever())
-
 
     def conversational_chat(query):
         
