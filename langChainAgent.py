@@ -49,6 +49,25 @@ if uploaded_file :
     # embeddings = OpenAIEmbeddings()
     # vectors = FAISS.from_documents(data, embeddings)
 
+    def getFaceBox(net, frame, conf_threshold=0.7):
+        frameOpencvDnn = frame.copy()
+        frameHeight = frameOpencvDnn.shape[0]
+        frameWidth = frameOpencvDnn.shape[1]
+        blob = cv.dnn.blobFromImage(frameOpencvDnn, 1.0, (300, 300), [104, 117, 123], True, False)    
+        net.setInput(blob)
+        detections = net.forward()
+        bboxes = []
+        for i in range(detections.shape[2]):
+            confidence = detections[0, 0, i, 2]
+            if confidence > conf_threshold:
+                x1 = int(detections[0, 0, i, 3] * frameWidth)
+                y1 = int(detections[0, 0, i, 4] * frameHeight)
+                x2 = int(detections[0, 0, i, 5] * frameWidth)
+                y2 = int(detections[0, 0, i, 6] * frameHeight)
+                bboxes.append([x1, y1, x2, y2])
+                cv.rectangle(frameOpencvDnn, (x1, y1), (x2, y2), (0, 255, 0), int(round(frameHeight/150)), 8)
+            return frameOpencvDnn, bboxes
+
     class ImageCaptionTool(BaseTool):
         name = "Image captioner"
         description = "Use this tool when given the path to an image that you would like to be described. " \
@@ -151,49 +170,6 @@ if uploaded_file :
         def _arun(self, query: str):
             raise NotImplementedError("This tool does not support async")
         
-    def get_image_caption(image_path):
-        """
-        Generates a short caption for the provided image.
-
-        Args:
-            image_path (str): The path to the image file.
-
-        Returns:
-            str: A string representing the caption for the image.
-        """
-        image = Image.open(image_path).convert('RGB')
-
-        model_name = "Salesforce/blip-image-captioning-large"
-        device = "cpu"  # cuda
-
-        processor = BlipProcessor.from_pretrained(model_name)
-        model = BlipForConditionalGeneration.from_pretrained(model_name).to(device)
-
-        inputs = processor(image, return_tensors='pt').to(device)
-        output = model.generate(**inputs, max_new_tokens=4000)
-
-        caption = processor.decode(output[0], skip_special_tokens=True)
-
-        return caption
-    
-    def getFaceBox(net, frame, conf_threshold=0.7):
-        frameOpencvDnn = frame.copy()
-        frameHeight = frameOpencvDnn.shape[0]
-        frameWidth = frameOpencvDnn.shape[1]
-        blob = cv.dnn.blobFromImage(frameOpencvDnn, 1.0, (300, 300), [104, 117, 123], True, False)    
-        net.setInput(blob)
-        detections = net.forward()
-        bboxes = []
-        for i in range(detections.shape[2]):
-            confidence = detections[0, 0, i, 2]
-            if confidence > conf_threshold:
-                x1 = int(detections[0, 0, i, 3] * frameWidth)
-                y1 = int(detections[0, 0, i, 4] * frameHeight)
-                x2 = int(detections[0, 0, i, 5] * frameWidth)
-                y2 = int(detections[0, 0, i, 6] * frameHeight)
-                bboxes.append([x1, y1, x2, y2])
-                cv.rectangle(frameOpencvDnn, (x1, y1), (x2, y2), (0, 255, 0), int(round(frameHeight/150)), 8)
-        return frameOpencvDnn, bboxes
     
     faceProto = "AgeGender/opencv_face_detector.pbtxt"
     faceModel = "AgeGender/opencv_face_detector_uint8.pb"
@@ -211,91 +187,6 @@ if uploaded_file :
 
     ageList = ['(0-2)', '(4-6)', '(8-12)', '(15-20)', '(25-32)', '(34-39)', '(48-53)', '(60-100)']
     genderList = ['Male', 'Female'] 
-        
-
-    def age_gender_detector(img_path):
-
-        """
-        Detects gender and age in the provided image.
-
-        Args:
-            image_path (str): The path to the image file.
-
-        Returns:
-            str: A string with all the detected objects. Each object as '[x1, x2, y1, y2, class_name, confindence_score]'.
-        """
-
-        # Read frame
-
-        frame = cv.imread(img_path)
-
-        padding = 20
-
-        t = time.time()
-        frameFace, bboxes = getFaceBox(faceNet, frame)
-        for bbox in bboxes:
-            # print(bbox)
-            face = frame[max(0,bbox[1]-padding):min(bbox[3]+padding,frame.shape[0]-1),max(0,bbox[0]-padding):min(bbox[2]+padding, frame.shape[1]-1)]
-            blob = cv.dnn.blobFromImage(face, 1.0, (227, 227), MODEL_MEAN_VALUES, swapRB=False)
-            genderNet.setInput(blob)
-            genderPreds = genderNet.forward()
-            gender = genderList[genderPreds[0].argmax()]
-            # print("Gender Output : {}".format(genderPreds))
-            print("Gender : {}, conf = {:.3f}".format(gender, genderPreds[0].max()))
-            ageNet.setInput(blob)
-            agePreds = ageNet.forward()
-            age = ageList[agePreds[0].argmax()]
-            print("Age Output : {}".format(agePreds))
-            print("Age : {}, conf = {:.3f}".format(age, agePreds[0].max()))
-            label = "{},{}".format(gender, age)
-            cv.putText(frameFace, label, (bbox[0], bbox[1]-10), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv.LINE_AA)
-            return frameFace
-    
-    def get_image_emotion(image_path):
-      
-        """
-        Detects emotions in the provided image.
-
-        Args:
-            image_path (str): The path to the image file.
-
-        Returns:
-            str: A string with all the detected objects. Each object as '[x1, x2, y1, y2, class_name, confindence_score]'.
-        """
-
-        return DeepFace.analyze(img_path = image_path)
-
-
-    def detect_objects(image_path):
-        """
-        Detects objects in the provided image.
-
-        Args:
-            image_path (str): The path to the image file.
-
-        Returns:
-            str: A string with all the detected objects. Each object as '[x1, x2, y1, y2, class_name, confindence_score]'.
-        """
-        image = Image.open(image_path).convert('RGB')
-
-        processor = DetrImageProcessor.from_pretrained("facebook/detr-resnet-50")
-        model = DetrForObjectDetection.from_pretrained("facebook/detr-resnet-50")
-
-        inputs = processor(images=image, return_tensors="pt")
-        outputs = model(**inputs)
-
-        # convert outputs (bounding boxes and class logits) to COCO API
-        # let's only keep detections with score > 0.9
-        target_sizes = torch.tensor([image.size[::-1]])
-        results = processor.post_process_object_detection(outputs, target_sizes=target_sizes, threshold=0.9)[0]
-
-        detections = ""
-        for score, label, box in zip(results["scores"], results["labels"], results["boxes"]):
-            detections += '[{}, {}, {}, {}]'.format(int(box[0]), int(box[1]), int(box[2]), int(box[3]))
-            detections += ' {}'.format(model.config.id2label[int(label)])
-            detections += ' {}\n'.format(float(score))
-
-        return detections
 
 
     #initialize the agent
