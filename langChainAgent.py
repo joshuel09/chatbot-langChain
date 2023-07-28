@@ -1,28 +1,16 @@
-#pip install streamlit langchain openai faiss-cpu tiktoken
 import os
 import streamlit as st
 from streamlit_chat import message
-from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.chat_models import ChatOpenAI
-from langchain.chains import ConversationalRetrievalChain
-# from langchain.document_loaders.csv_loader import CSVLoader
-from langchain.document_loaders import PyPDFLoader
-from langchain.vectorstores import FAISS
 import tempfile
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-
 from langchain.tools import BaseTool
 from transformers import BlipProcessor, BlipForConditionalGeneration, DetrImageProcessor, DetrForObjectDetection
 from PIL import Image
 import torch
-#
 from langchain.agents import initialize_agent
 from langchain.chains.conversation.memory import ConversationBufferWindowMemory
-
 from deepface import DeepFace
-
 import cv2 as cv
-import math
 import time
 
 
