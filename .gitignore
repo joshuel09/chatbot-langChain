@@ -48,3 +48,13 @@ coverage.xml
 
 # Sphinx documentation
 docs/_build/
+
+# macOS
+.DS_Store
+
+# Virtual environment
+.venv/
+venv/
+pyvenv.cfg
+etc/
+share/
