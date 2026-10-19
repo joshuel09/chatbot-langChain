@@ -21,9 +21,12 @@ user_api_key = st.sidebar.text_input(
 
 uploaded_file = st.sidebar.file_uploader("upload", type=['png', 'jpg'])
 
-os.environ['OPENAI_API_KEY'] = user_api_key
+if user_api_key:
+    os.environ['OPENAI_API_KEY'] = user_api_key
+else:
+    st.sidebar.info("Enter your OpenAI API key to start chatting.")
 
-if uploaded_file :
+if uploaded_file and user_api_key:
     with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
         tmp_file.write(uploaded_file.getvalue())
         tmp_file_path = tmp_file.name
@@ -212,7 +215,7 @@ if uploaded_file :
         st.session_state['history'] = []
 
     if 'generated' not in st.session_state:
-        st.session_state['generated'] = ["Hello ! Feel free to ask about anything regarding this" + uploaded_file.name]
+        st.session_state['generated'] = ["Hello! Feel free to ask about anything regarding " + uploaded_file.name]
 
     if 'past' not in st.session_state:
         st.session_state['past'] = ["Hey !"]
